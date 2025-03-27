@@ -20,7 +20,7 @@ jobs:
 
       - name: Run tests
         run: |
-          uv pip install -e ".[dev]"
+          uv pip install --system -e ".[dev]"
           pytest
 
       - name: Deploy to VPS
