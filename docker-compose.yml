@@ -5,12 +5,20 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./src:/app/src
+      - bot_data:/app/data
     env_file:
       - .env
     restart: unless-stopped
     networks:
       - bot-network
+    command: >
+      sh -c "python -m scripts.init_db && python -m src.bot.main"
+
 
 networks:
   bot-network:
     driver: bridge
+
+volumes:
+  bot_data:
+    name: tg_manual_bot_data

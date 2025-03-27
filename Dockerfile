@@ -18,9 +18,10 @@ COPY pyproject.toml ./
 
 # Copy source code
 COPY src/ ./src/
+COPY scripts/ ./scripts/
 
 # Install dependencies using uv
 RUN uv pip install --system -e .
 
-# Run the application
-CMD ["python", "-m", "src.bot.main"]
+# Create data directory
+RUN mkdir -p /app/data

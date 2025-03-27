@@ -92,3 +92,6 @@ dmypy.json
 
 # Docker
 .docker/
+
+# Data
+data/

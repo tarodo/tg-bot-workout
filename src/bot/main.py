@@ -1,7 +1,5 @@
-import logging
-import sys
+#!/usr/bin/env python
 
-import structlog
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -12,34 +10,40 @@ from telegram.ext import (
 )
 
 from .config import get_settings
+from .db.base import get_db
+from .db.repositories import UserRepository
 from .echo import concat_new
+from .logging import get_logger, setup_logging
 
-# Logging setup
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-    stream=sys.stdout,
-)
-
-# Structured logging configuration
-structlog.configure(
-    processors=[
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.dev.ConsoleRenderer(),
-    ],
-    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-    context_class=dict,
-    logger_factory=structlog.PrintLoggerFactory(),
-)
-
-logger = structlog.get_logger()
+# Setup logging
+setup_logging()
+logger = get_logger(__name__)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a welcome message when the /start command is received."""
     user = update.effective_user
-    logger.info("Start command received", user_id=user.id, username=user.username)
+
+    # Get database session
+    async for session in get_db():
+        # Get or create user
+        user_repo = UserRepository(session)
+        db_user = await user_repo.get_or_create_user(
+            user_id=user.id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            language_code=user.language_code,
+            is_bot=user.is_bot,
+        )
+
+    logger.info(
+        "Start command received",
+        user_id=user.id,
+        username=user.username,
+        is_new_user=db_user.created_at == db_user.updated_at,
+    )
+
     await update.message.reply_text(f"Hello, {user.full_name}! I'm an echo bot. Send me a message.")
 
 

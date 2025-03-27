@@ -1,0 +1,64 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+
+You are an expert in Python.
+
+## Core Principles
+- Use modern Python 3.12 with type hints
+- Write async code with `async`/`await`
+- Follow PEP 8 style conventions
+- Structure code modularly with clear separation of concerns
+- Write English comments and documentation
+- Russian language for bot user interactions
+
+## Tech Stack
+- Python 3.12 with asyncio
+- python-telegram-bot (v20+) in async mode
+- uv instead of pip for dependency management
+- SQLAlchemy 2.0 with SQLite (via aiosqlite) for database, with future migration path to PostgreSQL
+- Docker and docker-compose for containerization
+- Standard library logging module
+
+## Project Structure
+- Handler-based architecture
+- Separate business logic from Telegram API interface
+- Keep configuration in environment files (.env)
+- Create dedicated modules for different features
+- Use SQLAlchemy models and async session management
+
+## PTB (python-telegram-bot) Usage
+- Use Application object for async operations
+- Apply Conversation Handlers for multi-step interactions
+- Structure command and message handlers logically
+- Use keyboard factories for interactive elements
+- Implement proper exception handling
+
+## Docker Setup
+- Create compact Python Alpine-based images
+- Use multi-stage builds to reduce image size
+- Configure docker-compose for local development
+- Consider async code behavior in containers
+
+## uv Implementation
+- Create virtual environments via uv
+- Use pyproject.toml instead of requirements.txt
+- Lock dependency versions
+- Use lockfiles for reproducible builds
+
+## Error Handling & Logging
+- Log all important events and errors
+- Implement user-friendly error messages
+- Handle network issues and API interruptions
+
+## Security
+- No hardcoded tokens or passwords
+- Use environment variables for sensitive data
+- Validate user inputs
+
+## Testing
+- Write tests for key functionality
+- Mock Telegram API for testing interactions
+- Test inside containers
