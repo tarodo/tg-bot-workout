@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -10,7 +8,7 @@ from telegram.ext import (
 )
 
 from .config import get_settings
-from .db.base import get_db
+from .db.base import async_session
 from .db.repositories import UserRepository
 from .echo import concat_new
 from .logging import get_logger, setup_logging
@@ -19,15 +17,17 @@ from .logging import get_logger, setup_logging
 setup_logging()
 logger = get_logger(__name__)
 
+# Initialize settings
+settings = get_settings()
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a welcome message when the /start command is received."""
     user = update.effective_user
 
-    # Get database session
-    async for session in get_db():
-        # Get or create user
+    async with async_session() as session:
         user_repo = UserRepository(session)
+        # Get or create user
         db_user = await user_repo.get_or_create_user(
             user_id=user.id,
             username=user.username,
@@ -37,14 +37,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             is_bot=user.is_bot,
         )
 
-    logger.info(
-        "Start command received",
-        user_id=user.id,
-        username=user.username,
-        is_new_user=db_user.created_at == db_user.updated_at,
-    )
+        logger.info(
+            "Start command received",
+            user_id=user.id,
+            username=user.username,
+            is_new_user=db_user.created_at == db_user.updated_at,
+        )
 
-    await update.message.reply_text(f"Hello, {user.full_name}! I'm an echo bot. Send me a message.")
+        await update.message.reply_text(
+            f"Hello, {user.full_name}! I'm an echo bot. Send me a message."
+        )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -68,23 +70,16 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def main() -> None:
-    """Starts the bot."""
-    settings = get_settings()
+    """Start the bot."""
 
-    # Get token from environment variables
-    token = settings.TELEGRAM_TOKEN
-    logger.info("Starting bot")
+    # Create the Application and pass it your bot's token
+    application = Application.builder().token(settings.TELEGRAM_TOKEN).build()
 
-    # Create application
-    application = Application.builder().token(token).build()
-
-    # Register handlers
+    # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
-    # Start the bot
-    logger.info("Bot is running")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

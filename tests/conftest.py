@@ -1,49 +1,51 @@
 from collections.abc import AsyncGenerator
 
 import pytest
+from bot.db.init_db import init_db
+from bot.db.models import Base
+from bot.db.repositories import UserRepository
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from src.bot.db.base import Base
-from src.bot.db.repositories import UserRepository
 
-# Test database URL
-TEST_DATABASE_URL = "sqlite+aiosqlite:///./test.db"
+@pytest.fixture
+async def setup_database() -> AsyncGenerator[None, None]:
+    """Set up test database."""
+    # Use in-memory SQLite for tests
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=True)
 
-# Create test engine
-test_engine = create_async_engine(
-    TEST_DATABASE_URL,
-    echo=False,
-    future=True,
-)
-
-# Create test session factory
-test_session = sessionmaker(
-    test_engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
-
-
-@pytest.fixture(autouse=True)
-async def setup_database() -> AsyncGenerator:
-    """Setup test database."""
-    async with test_engine.begin() as conn:
+    async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    yield
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with async_session() as _:
+        await init_db()
+        yield
+
+    await engine.dispose()
 
 
 @pytest.fixture
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
+async def db_session(setup_database) -> AsyncGenerator[AsyncSession, None]:
     """Create a fresh database session for each test."""
-    async with test_session() as session:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=True)
+
+    # Create tables for each test
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with async_session() as session:
         yield session
 
+    await engine.dispose()
+
 
 @pytest.fixture
-async def user_repo(db_session: AsyncSession) -> AsyncGenerator[UserRepository, None]:
+async def user_repo(db_session: AsyncSession) -> UserRepository:
     """Create a UserRepository instance for each test."""
-    yield UserRepository(db_session)
+    return UserRepository(db_session)

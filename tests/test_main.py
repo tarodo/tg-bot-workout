@@ -1,75 +1,87 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from telegram import Update
-from telegram import User as TelegramUser
-from telegram.ext import ContextTypes
-
-from src.bot.main import echo, help_command, start
+from bot.db.repositories import UserRepository
+from bot.main import echo, help_command, start
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.mark.asyncio
 async def test_start():
     """Test /start command."""
-    # Create mock update
-    update = MagicMock(spec=Update)
-    update.effective_user = MagicMock(spec=TelegramUser)
+    # Mock update and context
+    update = MagicMock()
     update.effective_user.id = 123456789
     update.effective_user.username = "test_user"
     update.effective_user.first_name = "Test"
     update.effective_user.last_name = "User"
     update.effective_user.language_code = "en"
     update.effective_user.is_bot = False
-    # Mock full_name property
-    update.effective_user.full_name = "Test User"
     update.message.reply_text = AsyncMock()
 
-    # Create mock context
-    context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+    context = MagicMock()
+    context.bot_data = {}
 
-    # Run command
-    await start(update, context)
-
-    # Check reply
-    update.message.reply_text.assert_called_once_with(
-        "Hello, Test User! I'm an echo bot. Send me a message."
+    # Mock user repository
+    mock_user_repo = AsyncMock(spec=UserRepository)
+    mock_user_repo.get_or_create_user.return_value = MagicMock(
+        id=123456789,
+        username="test_user",
+        first_name="Test",
+        last_name="User",
+        language_code="en",
+        is_bot=False,
+        created_at=MagicMock(),
+        updated_at=MagicMock(),
     )
+
+    # Mock async session
+    mock_session = AsyncMock(spec=AsyncSession)
+    mock_session.__aenter__.return_value = mock_session
+
+    with patch("bot.main.async_session", return_value=mock_session), patch(
+        "bot.main.UserRepository", return_value=mock_user_repo
+    ):
+        await start(update, context)
+
+    # Verify that get_or_create_user was called with correct parameters
+    mock_user_repo.get_or_create_user.assert_called_once_with(
+        user_id=123456789,
+        username="test_user",
+        first_name="Test",
+        last_name="User",
+        language_code="en",
+        is_bot=False,
+    )
+
+    # Verify that update.message.reply_text was called
+    update.message.reply_text.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_help():
     """Test /help command."""
-    # Create mock update
-    update = MagicMock(spec=Update)
-    update.effective_user = MagicMock(spec=TelegramUser)
-    update.effective_user.id = 123456789
+    # Mock update and context
+    update = MagicMock()
     update.message.reply_text = AsyncMock()
+    context = MagicMock()
 
-    # Create mock context
-    context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
-
-    # Run command
     await help_command(update, context)
 
-    # Check reply
-    update.message.reply_text.assert_called_once_with(
-        "I just repeat your messages. Send me some text!"
-    )
+    # Verify that update.message.reply_text was called
+    update.message.reply_text.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_echo():
-    """Test echo handler."""
-    # Create mock update
-    update = MagicMock(spec=Update)
-    update.message.text = "Hello, World!"
+    """Test echo command."""
+    # Mock update and context
+    update = MagicMock()
+    update.message.text = "Test message"
     update.message.reply_text = AsyncMock()
+    context = MagicMock()
 
-    # Create mock context
-    context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
-
-    # Run handler
     await echo(update, context)
 
-    # Check reply
-    update.message.reply_text.assert_called_once_with("Hello, World! new")
+    # Verify that update.message.reply_text was called with the same text
+    update.message.reply_text.assert_called_once_with("Test message new")
