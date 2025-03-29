@@ -54,7 +54,7 @@ async def load_program(session: AsyncSession, program_data: dict) -> None:
 async def main() -> None:
     """Load program data from YAML to database."""
     # Read YAML file
-    yaml_path = Path(__file__).parent.parent / "data" / "trainings" / "run_health.yaml"
+    yaml_path = Path(__file__).parent.parent / "trainings" / "run_health.yaml"
     with open(yaml_path, encoding="utf-8") as f:
         program_data = yaml.safe_load(f)
 

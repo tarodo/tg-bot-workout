@@ -19,7 +19,7 @@ COPY pyproject.toml ./
 # Copy source code
 COPY src/ ./src/
 COPY scripts/ ./scripts/
-COPY data/ ./data/
+
 
 # Install dependencies using uv
 RUN uv pip install --system -e .

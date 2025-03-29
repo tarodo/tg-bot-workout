@@ -95,3 +95,5 @@ dmypy.json
 
 # Data
 data/
+
+trainings/run_health.yaml
