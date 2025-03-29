@@ -1,9 +1,12 @@
-from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, DateTime, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import BigInteger, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+
+if TYPE_CHECKING:
+    from .training import TrainingProgram, Workout
 
 
 class User(Base):
@@ -18,14 +21,15 @@ class User(Base):
     language_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
     is_bot: Mapped[bool] = mapped_column(default=False)
     is_premium: Mapped[bool] = mapped_column(default=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
+
+    # Relationships
+    training_programs: Mapped[list["TrainingProgram"]] = relationship(
+        secondary="user_training_programs",
+        back_populates="users",
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
+    workouts: Mapped[list["Workout"]] = relationship(
+        secondary="user_workouts",
+        back_populates="users",
     )
 
     def __repr__(self) -> str:

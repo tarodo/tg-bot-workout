@@ -2,7 +2,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from bot.db.init_db import init_db
-from bot.db.models import Base
+from bot.db.models.base import Base
 from bot.db.repositories import UserRepository
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker

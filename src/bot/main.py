@@ -8,7 +8,7 @@ from telegram.ext import (
 )
 
 from .config import get_settings
-from .db.base import async_session
+from .db.database import async_session
 from .db.repositories import UserRepository
 from .logging import get_logger, setup_logging
 from .user_state import UserDataManager

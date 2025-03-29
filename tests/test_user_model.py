@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.bot.db.models import User
+from src.bot.db.models.user import User
 
 
 @pytest.mark.asyncio

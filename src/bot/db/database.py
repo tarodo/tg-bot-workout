@@ -2,7 +2,7 @@ import os
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from ..config import get_settings
 
@@ -24,12 +24,6 @@ async_session = sessionmaker(
     class_=AsyncSession,
     expire_on_commit=False,
 )
-
-
-class Base(DeclarativeBase):
-    """Base class for all database models."""
-
-    pass
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

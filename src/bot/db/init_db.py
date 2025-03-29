@@ -3,7 +3,8 @@ from pathlib import Path
 
 from ..config import get_settings
 from ..logging import get_logger
-from .base import Base, engine
+from .database import engine
+from .models.base import Base
 
 logger = get_logger(__name__)
 settings = get_settings()
