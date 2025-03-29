@@ -79,9 +79,11 @@ async def test_echo():
     update = MagicMock()
     update.message.text = "Test message"
     update.message.reply_text = AsyncMock()
+    update.message.delete = AsyncMock()
     context = MagicMock()
 
     await echo(update, context)
 
     # Verify that update.message.reply_text was called with the same text
     update.message.reply_text.assert_called_once_with("Test message new")
+    update.message.delete.assert_called_once()

@@ -12,6 +12,7 @@ from .db.base import async_session
 from .db.repositories import UserRepository
 from .echo import concat_new
 from .logging import get_logger, setup_logging
+from .user_state import UserDataManager
 
 # Setup logging
 setup_logging()
@@ -44,8 +45,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             is_new_user=db_user.created_at == db_user.updated_at,
         )
 
-        await update.message.reply_text(
+        # Send welcome message and save its message_id
+        welcome_message = await update.message.reply_text(
             f"Hello, {user.full_name}! I'm an echo bot. Send me a message."
+        )
+
+        # Save message info for future editing
+        user_state = UserDataManager(context)
+        user_state.update_message(
+            chat_id=welcome_message.chat_id, message_id=welcome_message.message_id
         )
 
 
@@ -64,9 +72,27 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message=user_message,
     )
 
+    # Get user state and last bot message
+    user_state = UserDataManager(context)
+    last_bot_message = user_state.get_active_message()
+
+    # Delete user's message
+    await update.message.delete()
+
     # Use our function to append " new" to the message
     modified_message = concat_new(user_message)
-    await update.message.reply_text(modified_message)
+
+    if last_bot_message:
+        # Edit existing bot message
+        await context.bot.edit_message_text(
+            chat_id=last_bot_message.chat_id,
+            message_id=last_bot_message.message_id,
+            text=modified_message,
+        )
+    else:
+        # Send new message if no previous message exists
+        new_message = await update.message.reply_text(modified_message)
+        user_state.update_message(chat_id=new_message.chat_id, message_id=new_message.message_id)
 
 
 def main() -> None:
