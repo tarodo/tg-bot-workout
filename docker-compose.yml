@@ -8,11 +8,13 @@ services:
       - bot_data:/app/data
     env_file:
       - .env
+    environment:
+      - DOCKER_CONTAINER=1
     restart: unless-stopped
     networks:
       - bot-network
     command: >
-      sh -c "python -m scripts.init_db && python -m src.bot.main"
+      sh -c "python -m scripts.init_db && python -m scripts.load_running_program && python -m src.bot.main"
 
 
 networks:

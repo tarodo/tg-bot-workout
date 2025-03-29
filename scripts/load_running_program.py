@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pathlib import Path
 
 import yaml  # type: ignore
@@ -53,8 +54,18 @@ async def load_program(session: AsyncSession, program_data: dict) -> None:
 
 async def main() -> None:
     """Load program data from YAML to database."""
-    # Read YAML file
-    yaml_path = Path(__file__).parent.parent / "trainings" / "run_health.yaml"
+    # Determine YAML file path based on environment
+    if os.getenv("DOCKER_CONTAINER"):
+        # Running in Docker
+        yaml_path = Path("/app/trainings/run_health.yaml")
+    else:
+        # Running locally
+        yaml_path = Path(__file__).parent.parent / "trainings" / "run_health.yaml"
+
+    if not yaml_path.exists():
+        print(f"Error: File {yaml_path} not found!")
+        return
+
     with open(yaml_path, encoding="utf-8") as f:
         program_data = yaml.safe_load(f)
 
