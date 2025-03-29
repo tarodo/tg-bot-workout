@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from bot.db.repositories import UserRepository
-from bot.main import echo, help_command, start
+from bot.main import echo, handle_main_menu_callback, help_command, start
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -87,3 +87,33 @@ async def test_echo():
     # Verify that update.message.reply_text was called with the same text
     update.message.reply_text.assert_called_once_with("Test message new")
     update.message.delete.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_main_menu_callback():
+    """Test main menu callback handler."""
+    # Mock update and context
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.message = MagicMock()
+    update.callback_query.message.delete = AsyncMock()
+    update.effective_user = MagicMock()
+    update.effective_user.full_name = "Test User"
+    update.message = MagicMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+    context.bot.edit_message_text = AsyncMock(side_effect=Exception("Message not found"))
+
+    await handle_main_menu_callback(update, context)
+
+    # Verify callback query was answered
+    update.callback_query.answer.assert_called_once()
+
+    # Verify old message was deleted
+    update.callback_query.message.delete.assert_called_once()
+
+    # Verify new message was sent (since edit failed)
+    update.message.reply_text.assert_called_once()
