@@ -1,7 +1,17 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, String, Table, Text
+from sqlalchemy import (
+    BigInteger,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -61,15 +71,21 @@ class Workout(Base):
         return f"<Workout {self.id}>"
 
 
-# Association tables for many-to-many relationships
-user_training_programs = Table(
-    "user_training_programs",
-    Base.metadata,
-    Column("user_id", BigInteger, ForeignKey("users.id"), primary_key=True),
-    Column("program_id", Integer, ForeignKey("training_programs.id"), primary_key=True),
-    Column("start_date", DateTime, default=lambda: datetime.now(UTC), primary_key=True),
-    Column("end_date", DateTime, nullable=True),
-)
+class UserTrainingProgram(Base):
+    """User training program association model."""
+
+    __tablename__ = "user_training_programs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
+    program_id: Mapped[int] = mapped_column(Integer, ForeignKey("training_programs.id"))
+    start_date: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    end_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "program_id", "start_date", name="uix_user_program_start"),
+    )
+
 
 user_workouts = Table(
     "user_workouts",

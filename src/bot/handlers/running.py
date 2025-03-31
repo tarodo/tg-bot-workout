@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from itertools import islice
 
 from bot.keyboards import get_main_keyboard
@@ -12,7 +13,7 @@ from telegram.ext import (
 )
 
 from ..db.database import async_session
-from ..db.models.training import TrainingProgram, Workout, user_training_programs
+from ..db.models.training import TrainingProgram, UserTrainingProgram, Workout
 from .common import show_main_menu
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ CALLBACK_PATTERNS = {
     "back_to_programs": "^back_to_programs$",
     "main_menu": "^main_menu$",
     "reg_program": "^reg_program_",
+    "end_program": "^end_program_",
 }
 
 
@@ -60,7 +62,11 @@ def create_program_menu_keyboard(
                     "Список тренировок", callback_data=f"show_program_{program_id}"
                 ),
             ],
-            [InlineKeyboardButton("Завершить программу", callback_data="end_program")],
+            [
+                InlineKeyboardButton(
+                    "Завершить программу", callback_data=f"end_program_{program_id}"
+                )
+            ],
             [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_programs")],
         ]
 
@@ -260,10 +266,10 @@ async def get_unfinished_programs(user_id: int) -> list[TrainingProgram]:
     async with async_session() as session:
         stmt = (
             select(TrainingProgram)
-            .join(user_training_programs)
+            .join(UserTrainingProgram)
             .where(
-                user_training_programs.c.user_id == user_id,
-                user_training_programs.c.end_date.is_(None),
+                UserTrainingProgram.user_id == user_id,
+                UserTrainingProgram.end_date.is_(None),
             )
         )
         result = await session.execute(stmt)
@@ -281,6 +287,7 @@ async def register_program(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             # Get program
             user_id = update.effective_user.id
 
+            # Check for unfinished programs
             unfinished_programs = await get_unfinished_programs(user_id)
 
             if unfinished_programs:
@@ -296,9 +303,8 @@ async def register_program(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 return SHOW_PROGRAMS
 
             # Register program
-            await session.execute(
-                user_training_programs.insert().values(user_id=user_id, program_id=program_id)
-            )
+            user_program = UserTrainingProgram(user_id=user_id, program_id=program_id)
+            session.add(user_program)
             await session.commit()
 
             await query.edit_message_text(
@@ -310,6 +316,41 @@ async def register_program(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return SHOW_PROGRAMS
     except Exception as e:
         logger.error(f"Error in register_program: {e}", exc_info=True)
+        await query.edit_message_text(
+            text="Произошла ошибка. Попробуйте позже.",
+            reply_markup=get_main_keyboard(),
+        )
+        return int(ConversationHandler.END)
+
+
+async def end_program(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """End program."""
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+
+    try:
+        program_id = int(query.data.split("_")[-1])
+        async with async_session() as session:
+            stmt = select(UserTrainingProgram).where(
+                UserTrainingProgram.user_id == user_id,
+                UserTrainingProgram.program_id == program_id,
+                UserTrainingProgram.end_date.is_(None),
+            )
+            result = await session.execute(stmt)
+            user_program = result.scalar_one()
+            user_program.end_date = datetime.now()
+            await session.commit()
+
+        await query.edit_message_text(
+            text="Программа успешно завершена.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("⬅️ Назад", callback_data="running")]]
+            ),
+        )
+        return SHOW_PROGRAMS
+    except Exception as e:
+        logger.error(f"Error in end_program: {e}", exc_info=True)
         await query.edit_message_text(
             text="Произошла ошибка. Попробуйте позже.",
             reply_markup=get_main_keyboard(),
@@ -331,6 +372,7 @@ def get_running_conversation_handler() -> ConversationHandler:
                 ),
                 CallbackQueryHandler(running_menu, pattern=CALLBACK_PATTERNS["back_to_programs"]),
                 CallbackQueryHandler(register_program, pattern=CALLBACK_PATTERNS["reg_program"]),
+                CallbackQueryHandler(end_program, pattern=CALLBACK_PATTERNS["end_program"]),
             ],
             SHOW_WORKOUTS: [
                 CallbackQueryHandler(show_workout_details, pattern=CALLBACK_PATTERNS["workout"]),
