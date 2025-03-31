@@ -55,24 +55,25 @@ async def load_program(session: AsyncSession, program_data: dict) -> None:
 async def main() -> None:
     """Load program data from YAML to database."""
     # Determine YAML file path based on environment
-    if os.getenv("DOCKER_CONTAINER"):
-        # Running in Docker
-        yaml_path = Path("/app/trainings/run_health.yaml")
-    else:
-        # Running locally
-        yaml_path = Path(__file__).parent.parent / "trainings" / "run_health.yaml"
+    training_list = ["run_health", "run_start"]
+    for training in training_list:
+        if os.getenv("DOCKER_CONTAINER"):
+            # Running in Docker
+            yaml_path = Path(f"/app/trainings/{training}.yaml")
+        else:
+            # Running locally
+            yaml_path = Path(__file__).parent.parent / "trainings" / f"{training}.yaml"
 
-    if not yaml_path.exists():
-        print(f"Error: File {yaml_path} not found!")
-        return
+        if not yaml_path.exists():
+            print(f"Error: File {yaml_path} not found!")
+            continue
+        with open(yaml_path, encoding="utf-8") as f:
+            program_data = yaml.safe_load(f)
 
-    with open(yaml_path, encoding="utf-8") as f:
-        program_data = yaml.safe_load(f)
-
-    # Load data into database
-    async with async_session() as session:
-        await load_program(session, program_data)
-        print("Program loaded successfully!")
+        # Load data into database
+        async with async_session() as session:
+            await load_program(session, program_data)
+            print("Program loaded successfully!")
 
 
 if __name__ == "__main__":
