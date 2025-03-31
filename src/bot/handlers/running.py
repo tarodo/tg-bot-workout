@@ -2,6 +2,7 @@ import logging
 from itertools import islice
 
 from bot.keyboards import get_main_keyboard
+from sqlalchemy import select
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import (
@@ -11,7 +12,7 @@ from telegram.ext import (
 )
 
 from ..db.database import async_session
-from ..db.models.training import TrainingProgram, Workout
+from ..db.models.training import TrainingProgram, Workout, user_training_programs
 from .common import show_main_menu
 
 logger = logging.getLogger(__name__)
@@ -27,24 +28,45 @@ CALLBACK_PATTERNS = {
     "workout": "^workout_",
     "back_to_programs": "^back_to_programs$",
     "main_menu": "^main_menu$",
+    "reg_program": "^reg_program_",
 }
 
 
-def create_programs_keyboard(programs: list[TrainingProgram]) -> list[list[InlineKeyboardButton]]:
+def create_programs_keyboard(
+    programs: list[TrainingProgram], active_programs_ids: list[int]
+) -> list[list[InlineKeyboardButton]]:
     """Create keyboard for programs list."""
+    id_to_name = {
+        p.id: p.name if p.id not in active_programs_ids else f"✅ {p.name} (продолжить)"
+        for p in programs
+    }
     keyboard = [
-        [InlineKeyboardButton(program.name, callback_data=f"program_{program.id}")]
-        for program in programs
+        [InlineKeyboardButton(name, callback_data=f"program_{id}")]
+        for id, name in id_to_name.items()
     ]
     keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")])
     return keyboard
 
 
-def create_program_menu_keyboard(program_id: int) -> list[list[InlineKeyboardButton]]:
+def create_program_menu_keyboard(
+    program_id: int, active_program: bool
+) -> list[list[InlineKeyboardButton]]:
     """Create keyboard for program menu."""
+    if active_program:
+        return [
+            [
+                InlineKeyboardButton("Продолжить тренировки", callback_data="give_active_workout"),
+                InlineKeyboardButton(
+                    "Список тренировок", callback_data=f"show_program_{program_id}"
+                ),
+            ],
+            [InlineKeyboardButton("Завершить программу", callback_data="end_program")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_programs")],
+        ]
+
     return [
         [
-            InlineKeyboardButton("Я в деле", callback_data="main_menu"),
+            InlineKeyboardButton("Я в деле", callback_data=f"reg_program_{program_id}"),
             InlineKeyboardButton("Список тренировок", callback_data=f"show_program_{program_id}"),
         ],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_programs")],
@@ -85,7 +107,10 @@ async def running_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             programs = await session.execute(TrainingProgram.__table__.select())
             programs = programs.fetchall()
 
-        keyboard = create_programs_keyboard(programs)
+            active_programs = await get_unfinished_programs(update.effective_user.id)
+            active_programs_ids = [p.id for p in active_programs]
+
+        keyboard = create_programs_keyboard(programs, active_programs_ids)
         reply_markup = InlineKeyboardMarkup(keyboard)
         text = "Выберите программу тренировок:"
 
@@ -109,6 +134,8 @@ async def show_program_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     await query.answer()
 
+    user_id = update.effective_user.id
+
     try:
         program_id = int(query.data.split("_")[1])
         async with async_session() as session:
@@ -122,7 +149,13 @@ async def show_program_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             return int(ConversationHandler.END)
 
-        keyboard = create_program_menu_keyboard(program_id)
+        # Check if user has active program
+        registered = await get_unfinished_programs(user_id)
+        active_program = False
+        if len(registered) == 1:
+            active_program = registered[0].id == program_id
+
+        keyboard = create_program_menu_keyboard(program_id, active_program)
         text = f"Программа: {program.name}\n{program.description}\nВыберите действие:"
 
         try:
@@ -222,6 +255,68 @@ async def show_workout_details(update: Update, context: ContextTypes.DEFAULT_TYP
         return int(ConversationHandler.END)
 
 
+async def get_unfinished_programs(user_id: int) -> list[TrainingProgram]:
+    """Get unfinished programs for user."""
+    async with async_session() as session:
+        stmt = (
+            select(TrainingProgram)
+            .join(user_training_programs)
+            .where(
+                user_training_programs.c.user_id == user_id,
+                user_training_programs.c.end_date.is_(None),
+            )
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+
+async def register_program(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Register program."""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        program_id = int(query.data.split("_")[-1])
+        async with async_session() as session:
+            # Get program
+            user_id = update.effective_user.id
+
+            unfinished_programs = await get_unfinished_programs(user_id)
+
+            if unfinished_programs:
+                await query.edit_message_text(
+                    text=(
+                        "У вас уже есть незавершенная программа тренировок.\n"
+                        "Завершите ее, прежде чем начать новую."
+                    ),
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("⬅️ Назад", callback_data="running")]]
+                    ),
+                )
+                return SHOW_PROGRAMS
+
+            # Register program
+            await session.execute(
+                user_training_programs.insert().values(user_id=user_id, program_id=program_id)
+            )
+            await session.commit()
+
+            await query.edit_message_text(
+                text="Программа успешно зарегистрирована. Начинайте тренировки!",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("⬅️ Назад", callback_data="running")]]
+                ),
+            )
+            return SHOW_PROGRAMS
+    except Exception as e:
+        logger.error(f"Error in register_program: {e}", exc_info=True)
+        await query.edit_message_text(
+            text="Произошла ошибка. Попробуйте позже.",
+            reply_markup=get_main_keyboard(),
+        )
+        return int(ConversationHandler.END)
+
+
 def get_running_conversation_handler() -> ConversationHandler:
     """Get conversation handler for running training."""
     return ConversationHandler(
@@ -235,6 +330,7 @@ def get_running_conversation_handler() -> ConversationHandler:
                     show_program_workouts, pattern=CALLBACK_PATTERNS["show_program"]
                 ),
                 CallbackQueryHandler(running_menu, pattern=CALLBACK_PATTERNS["back_to_programs"]),
+                CallbackQueryHandler(register_program, pattern=CALLBACK_PATTERNS["reg_program"]),
             ],
             SHOW_WORKOUTS: [
                 CallbackQueryHandler(show_workout_details, pattern=CALLBACK_PATTERNS["workout"]),

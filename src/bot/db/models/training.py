@@ -1,6 +1,7 @@
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, Table, Text
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -66,6 +67,8 @@ user_training_programs = Table(
     Base.metadata,
     Column("user_id", BigInteger, ForeignKey("users.id"), primary_key=True),
     Column("program_id", Integer, ForeignKey("training_programs.id"), primary_key=True),
+    Column("start_date", DateTime, default=lambda: datetime.now(UTC), primary_key=True),
+    Column("end_date", DateTime, nullable=True),
 )
 
 user_workouts = Table(
@@ -73,4 +76,5 @@ user_workouts = Table(
     Base.metadata,
     Column("user_id", BigInteger, ForeignKey("users.id"), primary_key=True),
     Column("workout_id", Integer, ForeignKey("workouts.id"), primary_key=True),
+    Column("finished_at", DateTime(timezone=True), nullable=True),
 )
