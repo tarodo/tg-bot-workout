@@ -1,3 +1,5 @@
+from itertools import islice
+
 from bot.keyboards import get_main_keyboard
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -11,7 +13,7 @@ from ..db.models.training import TrainingProgram, Workout
 from .common import show_main_menu
 
 # States
-SHOW_PROGRAMS, SHOW_WORKOUTS = range(2)
+SHOW_PROGRAMS, SHOW_PROGRAM_MENU, SHOW_WORKOUTS, SHOW_WORKOUT_DETAILS = range(4)
 
 
 async def running_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -50,12 +52,45 @@ async def running_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     return SHOW_PROGRAMS
 
 
+async def show_program_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Show program menu."""
+    query = update.callback_query
+    await query.answer()
+
+    program_id = int(query.data.split("_")[1])
+    async with async_session() as session:
+        # Get program
+        program = await session.get(TrainingProgram, program_id)
+        if not program:
+            await query.edit_message_text(
+                text="Программа не найдена. Попробуйте еще раз.",
+                reply_markup=get_main_keyboard(),
+            )
+            return int(ConversationHandler.END)
+
+        keyboard = []
+        keyboard.append(
+            [
+                InlineKeyboardButton("Я в деле", callback_data="main_menu"),
+                InlineKeyboardButton("План программы", callback_data=f"show_program_{program.id}"),
+            ]
+        )
+        keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="back_to_programs")])
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        text = f"Программа: {program.name}\n{program.description}\nВыберите действие:"
+
+        await query.edit_message_text(text=text, reply_markup=reply_markup)
+
+    return SHOW_PROGRAM_MENU
+
+
 async def show_program_workouts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show workouts for selected program."""
     query = update.callback_query
     await query.answer()
 
-    program_id = int(query.data.split("_")[1])
+    program_id = int(query.data.split("_")[-1])
 
     async with async_session() as session:
         # Get program and its workouts
@@ -75,21 +110,17 @@ async def show_program_workouts(update: Update, context: ContextTypes.DEFAULT_TY
         workouts = workouts.fetchall()
 
         keyboard = []
-        for workout in workouts:
-            keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        f"Тренировка {workout.order}",
-                        callback_data=f"workout_{workout.id}",
-                    )
-                ]
-            )
+        buttons = [
+            InlineKeyboardButton(str(w.order), callback_data=f"workout_{w.id}") for w in workouts
+        ]
+        it = iter(buttons)
+        keyboard.extend([list(islice(it, 5)) for _ in range(0, len(buttons), 5)])
 
         # Add back button
-        keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")])
+        keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data=f"program_{program.id}")])
 
         reply_markup = InlineKeyboardMarkup(keyboard)
-        text = f"Программа: {program.name}\n\n{program.description}\n\nВыберите тренировку:"
+        text = f"Программа: {program.name}\n{program.description}\nВыберите тренировку:"
 
         await query.edit_message_text(text=text, reply_markup=reply_markup)
 
@@ -116,22 +147,26 @@ async def show_workout_details(update: Update, context: ContextTypes.DEFAULT_TYP
         program = await session.get(TrainingProgram, workout.program_id)
 
         keyboard = [
-            [InlineKeyboardButton("⬅️ К списку тренировок", callback_data=f"program_{program.id}")],
-            [InlineKeyboardButton("⬅️ В главное меню", callback_data="main_menu")],
+            [
+                InlineKeyboardButton(
+                    "⬅️ К списку тренировок", callback_data=f"show_program_{program.id}"
+                )
+            ],
+            [InlineKeyboardButton("⬅️ К описанию программы", callback_data=f"program_{program.id}")],
         ]
 
         reply_markup = InlineKeyboardMarkup(keyboard)
         text = (
             f"Программа: {program.name}\n"
-            f"Тренировка {workout.order}\n\n"
+            f"Тренировка: {workout.order}\n\n"
             f"🎯 Описание:\n{workout.description}\n\n"
-            f"🔥 Разминка:\n{workout.warmup}\n\n"
             f"🏃‍♂️ План тренировки:\n{workout.plan}\n\n"
+            f"🔥 СБУ:\n{workout.warmup}\n\n"
         )
 
         await query.edit_message_text(text=text, reply_markup=reply_markup)
 
-    return SHOW_WORKOUTS
+    return SHOW_WORKOUT_DETAILS
 
 
 def get_running_conversation_handler() -> ConversationHandler:
@@ -140,12 +175,20 @@ def get_running_conversation_handler() -> ConversationHandler:
         entry_points=[CallbackQueryHandler(running_menu, pattern="^running$")],
         states={
             SHOW_PROGRAMS: [
-                CallbackQueryHandler(show_program_workouts, pattern="^program_"),
+                CallbackQueryHandler(show_program_menu, pattern="^program_"),
+            ],
+            SHOW_PROGRAM_MENU: [
+                CallbackQueryHandler(show_program_workouts, pattern="^show_program_"),
                 CallbackQueryHandler(running_menu, pattern="^back_to_programs$"),
             ],
             SHOW_WORKOUTS: [
                 CallbackQueryHandler(show_workout_details, pattern="^workout_"),
-                CallbackQueryHandler(show_program_workouts, pattern="^program_"),
+                CallbackQueryHandler(show_program_menu, pattern="^program_"),
+                CallbackQueryHandler(show_program_workouts, pattern="^show_program_"),
+            ],
+            SHOW_WORKOUT_DETAILS: [
+                CallbackQueryHandler(show_program_workouts, pattern="^show_program_"),
+                CallbackQueryHandler(show_program_menu, pattern="^program_"),
             ],
         },
         fallbacks=[
