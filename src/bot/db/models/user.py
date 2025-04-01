@@ -6,7 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
 if TYPE_CHECKING:
-    from .training import TrainingProgram, Workout
+    from .training import UserTrainingProgram, UserWorkout
 
 
 class User(Base):
@@ -23,14 +23,10 @@ class User(Base):
     is_premium: Mapped[bool] = mapped_column(default=False)
 
     # Relationships
-    training_programs: Mapped[list["TrainingProgram"]] = relationship(
-        secondary="user_training_programs",
-        back_populates="users",
+    user_training_programs: Mapped[list["UserTrainingProgram"]] = relationship(
+        back_populates="user"
     )
-    workouts: Mapped[list["Workout"]] = relationship(
-        secondary="user_workouts",
-        back_populates="users",
-    )
+    user_workouts: Mapped[list["UserWorkout"]] = relationship(back_populates="user")
 
     def __repr__(self) -> str:
         """String representation of the user."""

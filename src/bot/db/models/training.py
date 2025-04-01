@@ -3,12 +3,10 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     BigInteger,
-    Column,
     DateTime,
     ForeignKey,
     Integer,
     String,
-    Table,
     Text,
     UniqueConstraint,
 )
@@ -30,11 +28,12 @@ class TrainingProgram(Base):
     description: Mapped[str] = mapped_column(Text, nullable=True)
 
     # Relationships
-    users: Mapped[list["User"]] = relationship(
-        secondary="user_training_programs",
-        back_populates="training_programs",
-    )
     workouts: Mapped[list["Workout"]] = relationship(
+        back_populates="program",
+        cascade="all, delete-orphan",
+    )
+
+    user_training_programs: Mapped[list["UserTrainingProgram"]] = relationship(
         back_populates="program",
         cascade="all, delete-orphan",
     )
@@ -61,9 +60,9 @@ class Workout(Base):
     program: Mapped["TrainingProgram"] = relationship(
         back_populates="workouts",
     )
-    users: Mapped[list["User"]] = relationship(
-        secondary="user_workouts",
-        back_populates="workouts",
+    user_workouts: Mapped[list["UserWorkout"]] = relationship(
+        back_populates="workout",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:
@@ -86,11 +85,35 @@ class UserTrainingProgram(Base):
         UniqueConstraint("user_id", "program_id", "start_date", name="uix_user_program_start"),
     )
 
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="user_training_programs")
+    program: Mapped["TrainingProgram"] = relationship(back_populates="user_training_programs")
+    user_workouts: Mapped[list["UserWorkout"]] = relationship(
+        back_populates="user_training_program",
+        cascade="all, delete-orphan",
+    )
 
-user_workouts = Table(
-    "user_workouts",
-    Base.metadata,
-    Column("user_id", BigInteger, ForeignKey("users.id"), primary_key=True),
-    Column("workout_id", Integer, ForeignKey("workouts.id"), primary_key=True),
-    Column("finished_at", DateTime(timezone=True), nullable=True),
-)
+
+class UserWorkout(Base):
+    """User workout association model."""
+
+    __tablename__ = "user_workouts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
+    workout_id: Mapped[int] = mapped_column(Integer, ForeignKey("workouts.id"))
+    user_program_id: Mapped[int] = mapped_column(Integer, ForeignKey("user_training_programs.id"))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "workout_id", "user_program_id", name="uix_user_workout_program"
+        ),
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="user_workouts")
+    workout: Mapped["Workout"] = relationship(back_populates="user_workouts")
+    user_training_program: Mapped["UserTrainingProgram"] = relationship(
+        back_populates="user_workouts"
+    )
