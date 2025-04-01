@@ -437,14 +437,13 @@ async def get_last_workout_id(user_id: int, user_program: UserTrainingProgram) -
                 select(UserWorkout)
                 .where(
                     UserWorkout.user_id == user_id,
-                    UserWorkout.user_program_id == user_program.program_id,
+                    UserWorkout.user_program_id == user_program.id,
                 )
                 .order_by(UserWorkout.finished_at.desc())
                 .limit(1)
             )
             result = await session.execute(stmt)
             last_workout = result.scalar_one_or_none()
-            logger.info(f"Last workout: {last_workout.id}")
             return last_workout.workout_id if last_workout else None
     except Exception as e:
         logger.error(f"Error in get_last_workout: {e}", exc_info=True)
@@ -466,7 +465,6 @@ async def give_active_workout(update: Update, context: ContextTypes.DEFAULT_TYPE
         return int(ConversationHandler.END)
 
     last_workout_id = await get_last_workout_id(user_id, active_program)
-    logger.info(f"Last workout id: {last_workout_id}")
     active_workout_order = 1
     if last_workout_id:
         try:
