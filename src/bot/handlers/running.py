@@ -20,7 +20,14 @@ from .common import show_main_menu
 logger = logging.getLogger(__name__)
 
 # States
-SHOW_PROGRAMS, SHOW_PROGRAM_MENU, SHOW_WORKOUTS, SHOW_WORKOUT_DETAILS, SHOW_END_WORKOUT = range(5)
+(
+    SHOW_PROGRAMS,
+    ACCEPT_PROGRAM_MENU,
+    SHOW_PROGRAM_MENU,
+    SHOW_WORKOUTS,
+    SHOW_WORKOUT_DETAILS,
+    SHOW_END_WORKOUT,
+) = range(6)
 
 # Callback data patterns
 CALLBACK_PATTERNS = {
@@ -53,6 +60,13 @@ def create_programs_keyboard(
     return keyboard
 
 
+def create_accept_program_keyboard(program_id: int) -> list[list[InlineKeyboardButton]]:
+    return [
+        [InlineKeyboardButton("Начать тренировку", callback_data="give_active_workout")],
+        [InlineKeyboardButton("⬅️ К описанию программы", callback_data=f"program_{program_id}")],
+    ]
+
+
 def create_program_menu_keyboard(
     program_id: int, active_program: bool
 ) -> list[list[InlineKeyboardButton]]:
@@ -70,7 +84,7 @@ def create_program_menu_keyboard(
                     "Завершить программу", callback_data=f"end_program_{program_id}"
                 )
             ],
-            [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_programs")],
+            [InlineKeyboardButton("⬅️ В главное меню", callback_data="main_menu")],
         ]
 
     return [
@@ -104,9 +118,11 @@ def create_workout_details_keyboard(
         return [
             [
                 InlineKeyboardButton(
-                    "⬅️ Завершить тренировку", callback_data=f"end_workout_{program_id}_{workout_id}"
+                    "✅ Завершить тренировку",
+                    callback_data=f"end_workout_{program_id}_{workout_id}",
                 )
             ],
+            [InlineKeyboardButton("⬅️ К описанию программы", callback_data=f"program_{program_id}")],
             [InlineKeyboardButton("⬅️ Главное меню", callback_data="main_menu")],
         ]
     else:
@@ -131,6 +147,11 @@ def create_end_workout_keyboard(program_id: int) -> list[list[InlineKeyboardButt
 
 async def running_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show running programs menu."""
+    user_id = update.effective_user.id
+    active_program = await get_active_program(user_id)
+    if active_program:
+        return await give_active_workout(update, context)
+
     query = update.callback_query
     if query:
         await query.answer()
@@ -363,13 +384,12 @@ async def register_program(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             session.add(user_program)
             await session.commit()
 
+            keyboard = create_accept_program_keyboard(program_id)
             await query.edit_message_text(
                 text="Программа успешно зарегистрирована. Начинайте тренировки!",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("⬅️ Назад", callback_data="running")]]
-                ),
+                reply_markup=InlineKeyboardMarkup(keyboard),
             )
-            return SHOW_PROGRAMS
+            return ACCEPT_PROGRAM_MENU
     except Exception as e:
         logger.error(f"Error in register_program: {e}", exc_info=True)
         await query.edit_message_text(
@@ -552,6 +572,12 @@ def get_running_conversation_handler() -> ConversationHandler:
             SHOW_PROGRAMS: [
                 CallbackQueryHandler(show_program_menu, pattern=CALLBACK_PATTERNS["program"]),
             ],
+            ACCEPT_PROGRAM_MENU: [
+                CallbackQueryHandler(show_program_menu, pattern=CALLBACK_PATTERNS["program"]),
+                CallbackQueryHandler(
+                    give_active_workout, pattern=CALLBACK_PATTERNS["give_active_workout"]
+                ),
+            ],
             SHOW_PROGRAM_MENU: [
                 CallbackQueryHandler(
                     show_program_workouts, pattern=CALLBACK_PATTERNS["show_program"]
@@ -581,7 +607,9 @@ def get_running_conversation_handler() -> ConversationHandler:
                 CallbackQueryHandler(
                     give_active_workout, pattern=CALLBACK_PATTERNS["give_active_workout"]
                 ),
-                CallbackQueryHandler(show_program_menu, pattern=CALLBACK_PATTERNS["program"]),
+                CallbackQueryHandler(
+                    show_program_workouts, pattern=CALLBACK_PATTERNS["show_program"]
+                ),
             ],
         },
         fallbacks=[
