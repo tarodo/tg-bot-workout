@@ -14,7 +14,7 @@ services:
     networks:
       - bot-network
     command: >
-      sh -c "python -m scripts.init_db && python -m scripts.load_running_program && python -m src.bot.main"
+      sh -c "alembic upgrade head && python -m scripts.load_running_program && python -m src.bot.main"
 
 
 networks:

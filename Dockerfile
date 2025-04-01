@@ -20,6 +20,8 @@ COPY pyproject.toml ./
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY trainings/ ./trainings/
+COPY migrations/ ./migrations/
+COPY alembic.ini ./
 
 # Install dependencies using uv
 RUN uv pip install --system -e .
