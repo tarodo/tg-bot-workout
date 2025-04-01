@@ -33,5 +33,5 @@ jobs:
             cd /opt/tg-bot-workout
             git pull
             echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" > .env
-            docker compose down --volumes
+            docker compose down
             docker compose up -d --build
