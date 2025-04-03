@@ -1,10 +1,8 @@
 import logging
-from datetime import datetime
 from itertools import islice
 
 from bot.keyboards import get_main_keyboard
 from bot.user_state import UserDataManager
-from sqlalchemy import select
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import (
@@ -13,8 +11,18 @@ from telegram.ext import (
     ConversationHandler,
 )
 
-from ..db.database import async_session
-from ..db.models.training import TrainingProgram, UserTrainingProgram, UserWorkout, Workout
+from ..db.models.training import TrainingProgram, Workout
+from ..db.queries import (
+    end_user_program,
+    get_active_program,
+    get_active_workout,
+    get_all_programs,
+    get_program_by_id,
+    get_program_workouts,
+    get_workout_by_id,
+    record_workout_completion,
+    register_user_program,
+)
 from .common import show_main_menu
 
 logger = logging.getLogger(__name__)
@@ -27,7 +35,8 @@ logger = logging.getLogger(__name__)
     SHOW_WORKOUTS,
     SHOW_WORKOUT_DETAILS,
     SHOW_END_WORKOUT,
-) = range(6)
+    SHOW_LAST_WORKOUT,
+) = range(7)
 
 # Callback data patterns
 CALLBACK_PATTERNS = {
@@ -35,7 +44,6 @@ CALLBACK_PATTERNS = {
     "program": "^program_",
     "show_program": "^show_program_",
     "workout": "^workout_",
-    "back_to_programs": "^back_to_programs$",
     "main_menu": "^main_menu$",
     "reg_program": "^reg_program_",
     "end_program": "^end_program_",
@@ -56,7 +64,7 @@ def create_programs_keyboard(
         [InlineKeyboardButton(name, callback_data=f"program_{id}")]
         for id, name in id_to_name.items()
     ]
-    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")])
+    keyboard.append([InlineKeyboardButton("⬅️ В главное меню", callback_data="main_menu")])
     return keyboard
 
 
@@ -68,10 +76,10 @@ def create_accept_program_keyboard(program_id: int) -> list[list[InlineKeyboardB
 
 
 def create_program_menu_keyboard(
-    program_id: int, active_program: bool
+    program_id: int, is_active: bool
 ) -> list[list[InlineKeyboardButton]]:
     """Create keyboard for program menu."""
-    if active_program:
+    if is_active:
         return [
             [
                 InlineKeyboardButton("Продолжить тренировки", callback_data="give_active_workout"),
@@ -92,7 +100,7 @@ def create_program_menu_keyboard(
             InlineKeyboardButton("Я в деле", callback_data=f"reg_program_{program_id}"),
             InlineKeyboardButton("Список тренировок", callback_data=f"show_program_{program_id}"),
         ],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_programs")],
+        [InlineKeyboardButton("⬅️ Список программ", callback_data="running")],
     ]
 
 
@@ -106,7 +114,9 @@ def create_workouts_keyboard(
     keyboard = []
     it = iter(buttons)
     keyboard.extend([list(islice(it, 5)) for _ in range(0, len(buttons), 5)])
-    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data=f"program_{program_id}")])
+    keyboard.append(
+        [InlineKeyboardButton("⬅️ К описанию программы", callback_data=f"program_{program_id}")]
+    )
     return keyboard
 
 
@@ -123,7 +133,7 @@ def create_workout_details_keyboard(
                 )
             ],
             [InlineKeyboardButton("⬅️ К описанию программы", callback_data=f"program_{program_id}")],
-            [InlineKeyboardButton("⬅️ Главное меню", callback_data="main_menu")],
+            [InlineKeyboardButton("⬅️ В главное меню", callback_data="main_menu")],
         ]
     else:
         return [
@@ -145,6 +155,14 @@ def create_end_workout_keyboard(program_id: int) -> list[list[InlineKeyboardButt
     ]
 
 
+def create_last_workout_keyboard(program_id: int) -> list[list[InlineKeyboardButton]]:
+    """Create keyboard for last workout."""
+    return [
+        [InlineKeyboardButton("⬅️ К описанию программы", callback_data=f"program_{program_id}")],
+        [InlineKeyboardButton("⬅️ Главное меню", callback_data="main_menu")],
+    ]
+
+
 async def running_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show running programs menu."""
     user_id = update.effective_user.id
@@ -157,13 +175,9 @@ async def running_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await query.answer()
 
     try:
-        async with async_session() as session:
-            # Get all training programs
-            programs = await session.execute(TrainingProgram.__table__.select())
-            programs = programs.fetchall()
-
-            active_programs = await get_unfinished_programs(update.effective_user.id)
-            active_programs_ids = [p.id for p in active_programs]
+        programs = await get_all_programs()
+        active_program = await get_active_program(update.effective_user.id)
+        active_programs_ids = [active_program.program_id] if active_program else []
 
         keyboard = create_programs_keyboard(programs, active_programs_ids)
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -193,9 +207,7 @@ async def show_program_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     try:
         program_id = int(query.data.split("_")[1])
-        async with async_session() as session:
-            # Get program
-            program = await session.get(TrainingProgram, program_id)
+        program = await get_program_by_id(program_id)
 
         if not program:
             await query.edit_message_text(
@@ -204,13 +216,11 @@ async def show_program_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             return int(ConversationHandler.END)
 
-        # Check if user has active program
-        registered = await get_unfinished_programs(user_id)
-        active_program = False
-        if len(registered) == 1:
-            active_program = registered[0].id == program_id
+        active_program = await get_active_program(user_id)
+        active_program_id = active_program.program_id if active_program else None
+        is_active = active_program_id == program_id
 
-        keyboard = create_program_menu_keyboard(program_id, active_program)
+        keyboard = create_program_menu_keyboard(program_id, is_active)
         text = f"Программа: {program.name}\n{program.description}\nВыберите действие:"
 
         try:
@@ -238,24 +248,15 @@ async def show_program_workouts(update: Update, context: ContextTypes.DEFAULT_TY
 
     try:
         program_id = int(query.data.split("_")[-1])
-
-        async with async_session() as session:
-            # Get program and its workouts
-            program = await session.get(TrainingProgram, program_id)
-            if not program:
-                await query.edit_message_text(
-                    text="Программа не найдена. Попробуйте еще раз.",
-                    reply_markup=get_main_keyboard(),
-                )
-                return int(ConversationHandler.END)
-
-            workouts = await session.execute(
-                Workout.__table__.select()
-                .where(Workout.program_id == program_id)
-                .order_by(Workout.order)
+        program = await get_program_by_id(program_id)
+        if not program:
+            await query.edit_message_text(
+                text="Программа не найдена. Попробуйте еще раз.",
+                reply_markup=get_main_keyboard(),
             )
-            workouts = workouts.fetchall()
+            return int(ConversationHandler.END)
 
+        workouts = await get_program_workouts(program_id)
         keyboard = create_workouts_keyboard(workouts, program_id)
         text = f"Программа: {program.name}\n{program.description}\nВыберите тренировку:"
 
@@ -281,21 +282,29 @@ async def show_workout_details(
     last_bot_message = user_state.get_active_message()
 
     try:
-        async with async_session() as session:
-            # Get workout and its program
-            workout = await session.get(Workout, workout_id)
-            if not workout:
-                text = "Тренировка не найдена. Попробуйте еще раз."
-                keyboard = get_main_keyboard()
-                await context.bot.edit_message_text(
-                    chat_id=last_bot_message.chat_id,
-                    message_id=last_bot_message.message_id,
-                    text=text,
-                    reply_markup=keyboard,
-                )
-                return int(ConversationHandler.END)
+        workout = await get_workout_by_id(workout_id)
+        if not workout:
+            text = "Тренировка не найдена. Попробуйте еще раз."
+            keyboard = get_main_keyboard()
+            await context.bot.edit_message_text(
+                chat_id=last_bot_message.chat_id,
+                message_id=last_bot_message.message_id,
+                text=text,
+                reply_markup=keyboard,
+            )
+            return int(ConversationHandler.END)
 
-            program = await session.get(TrainingProgram, workout.program_id)
+        program = await get_program_by_id(workout.program_id)
+        if not program:
+            text = "Программа не найдена. Попробуйте еще раз."
+            keyboard = get_main_keyboard()
+            await context.bot.edit_message_text(
+                chat_id=last_bot_message.chat_id,
+                message_id=last_bot_message.message_id,
+                text=text,
+                reply_markup=keyboard,
+            )
+            return int(ConversationHandler.END)
 
         keyboard = create_workout_details_keyboard(program.id, workout.id, is_active_workout)
         text = (
@@ -338,21 +347,6 @@ async def handle_workout_details(update: Update, context: ContextTypes.DEFAULT_T
     return await show_workout_details(update, context, workout_id)
 
 
-async def get_unfinished_programs(user_id: int) -> list[TrainingProgram]:
-    """Get unfinished programs for user."""
-    async with async_session() as session:
-        stmt = (
-            select(TrainingProgram)
-            .join(UserTrainingProgram)
-            .where(
-                UserTrainingProgram.user_id == user_id,
-                UserTrainingProgram.end_date.is_(None),
-            )
-        )
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
-
-
 async def register_program(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Register program."""
     query = update.callback_query
@@ -360,36 +354,31 @@ async def register_program(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     try:
         program_id = int(query.data.split("_")[-1])
-        async with async_session() as session:
-            # Get program
-            user_id = update.effective_user.id
+        user_id = update.effective_user.id
 
-            # Check for unfinished programs
-            unfinished_programs = await get_unfinished_programs(user_id)
-
-            if unfinished_programs:
-                await query.edit_message_text(
-                    text=(
-                        "У вас уже есть незавершенная программа тренировок.\n"
-                        "Завершите ее, прежде чем начать новую."
-                    ),
-                    reply_markup=InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("⬅️ Назад", callback_data="running")]]
-                    ),
-                )
-                return SHOW_PROGRAMS
-
-            # Register program
-            user_program = UserTrainingProgram(user_id=user_id, program_id=program_id)
-            session.add(user_program)
-            await session.commit()
-
-            keyboard = create_accept_program_keyboard(program_id)
+        # Check for unfinished programs
+        active_program = await get_active_program(user_id)
+        if active_program:
             await query.edit_message_text(
-                text="Программа успешно зарегистрирована. Начинайте тренировки!",
-                reply_markup=InlineKeyboardMarkup(keyboard),
+                text=(
+                    "У вас уже есть незавершенная программа тренировок.\n"
+                    "Завершите ее, прежде чем начать новую."
+                ),
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("⬅️ Назад", callback_data="running")]]
+                ),
             )
-            return ACCEPT_PROGRAM_MENU
+            return SHOW_PROGRAMS
+
+        # Register program
+        await register_user_program(user_id, program_id)
+
+        keyboard = create_accept_program_keyboard(program_id)
+        await query.edit_message_text(
+            text="Программа успешно зарегистрирована. Начинайте тренировки!",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return ACCEPT_PROGRAM_MENU
     except Exception as e:
         logger.error(f"Error in register_program: {e}", exc_info=True)
         await query.edit_message_text(
@@ -407,16 +396,7 @@ async def end_program(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     try:
         program_id = int(query.data.split("_")[-1])
-        async with async_session() as session:
-            stmt = select(UserTrainingProgram).where(
-                UserTrainingProgram.user_id == user_id,
-                UserTrainingProgram.program_id == program_id,
-                UserTrainingProgram.end_date.is_(None),
-            )
-            result = await session.execute(stmt)
-            user_program = result.scalar_one()
-            user_program.end_date = datetime.now()
-            await session.commit()
+        await end_user_program(user_id, program_id)
 
         await query.edit_message_text(
             text="Программа успешно завершена.",
@@ -434,85 +414,39 @@ async def end_program(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return int(ConversationHandler.END)
 
 
-async def get_active_program(user_id: int) -> UserTrainingProgram | None:
-    """Get active program for user."""
-    try:
-        async with async_session() as session:
-            stmt = select(UserTrainingProgram).where(
-                UserTrainingProgram.user_id == user_id,
-                UserTrainingProgram.end_date.is_(None),
-            )
-            result = await session.execute(stmt)
-            return result.scalar_one_or_none()  # type: ignore[no-any-return]
-    except Exception as e:
-        logger.error(f"Error in get_active_program: {e}", exc_info=True)
-        return None
-
-
-async def get_last_workout_id(user_id: int, user_program: UserTrainingProgram) -> int | None:
-    """Get last workout for user."""
-    try:
-        async with async_session() as session:
-            stmt = (
-                select(UserWorkout)
-                .where(
-                    UserWorkout.user_id == user_id,
-                    UserWorkout.user_program_id == user_program.id,
-                )
-                .order_by(UserWorkout.finished_at.desc())
-                .limit(1)
-            )
-            result = await session.execute(stmt)
-            last_workout = result.scalar_one_or_none()
-            return last_workout.workout_id if last_workout else None
-    except Exception as e:
-        logger.error(f"Error in get_last_workout: {e}", exc_info=True)
-        return None
-
-
 async def give_active_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Give active workout."""
     query = update.callback_query
     await query.answer()
 
     user_id = update.effective_user.id
-    active_program = await get_active_program(user_id)
-    if not active_program:
-        await query.edit_message_text(
-            text="У вас нет активной программы тренировок.",
-            reply_markup=get_main_keyboard(),
-        )
-        return int(ConversationHandler.END)
 
-    last_workout_id = await get_last_workout_id(user_id, active_program)
-    active_workout_order = 1
-    if last_workout_id:
-        try:
-            async with async_session() as session:
-                workout = await session.get(Workout, last_workout_id)
-                active_workout_order = workout.order + 1
-        except Exception as e:
-            logger.error(f"Error in get_active_workout: {e}", exc_info=True)
-            return int(ConversationHandler.END)
-
-    async with async_session() as session:
-        try:
-            stmt = select(Workout).where(
-                Workout.program_id == active_program.program_id,
-                Workout.order == active_workout_order,
-            )
-            result = await session.execute(stmt)
-            workout = result.scalar_one_or_none()
-
-            if not workout:
+    try:
+        workout, is_last_workout = await get_active_workout(user_id)
+        if is_last_workout:
+            active_program = await get_active_program(user_id)
+            if not active_program:
                 await query.edit_message_text(
-                    text="Тренировка не найдена. Возможно, вы уже завершили программу.",
+                    text="У вас нет активной программы тренировок.",
                     reply_markup=get_main_keyboard(),
                 )
                 return int(ConversationHandler.END)
-        except Exception as e:
-            logger.error(f"Error in give_active_workout: {e}", exc_info=True)
+            keyboard = create_last_workout_keyboard(active_program.program_id)
+            await query.edit_message_text(
+                text="Вы завершили программу тренировок.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+            return SHOW_LAST_WORKOUT
+
+        if not workout:
+            await query.edit_message_text(
+                text="Тренировка не найдена. Возможно, вы уже завершили программу.",
+                reply_markup=get_main_keyboard(),
+            )
             return int(ConversationHandler.END)
+    except Exception as e:
+        logger.error(f"Error in give_active_workout: {e}", exc_info=True)
+        return int(ConversationHandler.END)
 
     return await show_workout_details(update, context, workout.id, True)
 
@@ -525,40 +459,32 @@ async def end_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     program_id, workout_id = map(int, query.data.split("_")[-2:])
 
     try:
-        async with async_session() as session:
-            # Get active program
-            active_program = await get_active_program(user_id)
-            if not active_program:
-                await query.edit_message_text(
-                    text="У вас нет активной программы тренировок.",
-                    reply_markup=get_main_keyboard(),
-                )
-                return int(ConversationHandler.END)
-
-            # Get workout
-            workout = await session.get(Workout, workout_id)
-            if not workout:
-                await query.edit_message_text(
-                    text="Тренировка не найдена.",
-                    reply_markup=get_main_keyboard(),
-                )
-                return int(ConversationHandler.END)
-
-            # Create user workout record
-            user_workout = UserWorkout(
-                user_id=user_id,
-                workout_id=workout_id,
-                user_program_id=active_program.id,
-                finished_at=datetime.now(),
+        # Get active program
+        active_program = await get_active_program(user_id)
+        if not active_program:
+            await query.edit_message_text(
+                text="У вас нет активной программы тренировок.",
+                reply_markup=get_main_keyboard(),
             )
-            session.add(user_workout)
-            await session.commit()
+            return int(ConversationHandler.END)
 
-            text = f"🎉 Тренировка завершена!\n\n{workout.final_message}"
-            keyboard = create_end_workout_keyboard(program_id)
-            await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard))
+        # Get workout
+        workout = await get_workout_by_id(workout_id)
+        if not workout:
+            await query.edit_message_text(
+                text="Тренировка не найдена.",
+                reply_markup=get_main_keyboard(),
+            )
+            return int(ConversationHandler.END)
 
-            return SHOW_END_WORKOUT
+        # Create user workout record
+        await record_workout_completion(user_id, workout_id, active_program.id)
+
+        text = f"🎉 Тренировка завершена!\n\n{workout.final_message}"
+        keyboard = create_end_workout_keyboard(program_id)
+        await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+        return SHOW_END_WORKOUT
     except Exception as e:
         logger.error(f"Error in end_workout: {e}", exc_info=True)
         return int(ConversationHandler.END)
@@ -582,7 +508,6 @@ def get_running_conversation_handler() -> ConversationHandler:
                 CallbackQueryHandler(
                     show_program_workouts, pattern=CALLBACK_PATTERNS["show_program"]
                 ),
-                CallbackQueryHandler(running_menu, pattern=CALLBACK_PATTERNS["back_to_programs"]),
                 CallbackQueryHandler(register_program, pattern=CALLBACK_PATTERNS["reg_program"]),
                 CallbackQueryHandler(end_program, pattern=CALLBACK_PATTERNS["end_program"]),
                 CallbackQueryHandler(
@@ -610,6 +535,9 @@ def get_running_conversation_handler() -> ConversationHandler:
                 CallbackQueryHandler(
                     show_program_workouts, pattern=CALLBACK_PATTERNS["show_program"]
                 ),
+            ],
+            SHOW_LAST_WORKOUT: [
+                CallbackQueryHandler(show_program_menu, pattern=CALLBACK_PATTERNS["program"]),
             ],
         },
         fallbacks=[
