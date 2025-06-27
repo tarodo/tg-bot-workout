@@ -20,6 +20,7 @@ def get_main_menu_conversation_handler() -> ConversationHandler:
         ],
         states={
             MAIN_MENU: [
+                CommandHandler("start", show_main_menu),
                 CallbackQueryHandler(show_main_menu, pattern="^main_menu$"),
                 get_running_conversation_handler(),
             ],
